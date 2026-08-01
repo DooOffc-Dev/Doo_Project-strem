@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><%= title %></title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+  <style>
+    body { background-color: #0f172a; color: #f8fafc; }
+    .card-hover:hover { transform: scale(1.02); transition: 0.2s; }
+  </style>
+</head>
+<body class="font-sans min-h-screen flex flex-col">
+  <nav class="bg-[#1e293b] p-4 shadow-lg sticky top-0 z-50 border-b border-gray-700">
+    <div class="container mx-auto flex justify-between items-center">
+      <a href="/" class="text-2xl font-bold bg-gradient-to-r from-blue-500 to-purple-500 text-transparent bg-clip-text">
+        <i class="fas fa-fire text-orange-500"></i> DooHIGH
+      </a>
+      <div class="flex gap-4">
+        <a href="/" class="hover:text-blue-400">Home</a>
+        <a href="/search" class="hover:text-blue-400"><i class="fas fa-search"></i></a>
+      </div>
+    </div>
+  </nav>
+  <main class="flex-grow container mx-auto p-4">
+    <%- body %>
+  </main>
+  <footer class="bg-[#1e293b] p-6 text-center text-gray-400 text-sm border-t border-gray-700 mt-10">
+    &copy; 2026 DooHIGH AI V1.0.0 - Scraper Integration
+  </footer>
+</body>
+</html>

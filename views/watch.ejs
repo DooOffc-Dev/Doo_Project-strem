@@ -1,0 +1,57 @@
+<%- include('layout') %>
+<div class="max-w-4xl mx-auto">
+  <button onclick="history.back()" class="mb-4 bg-gray-700 px-4 py-2 rounded hover:bg-gray-600"><i class="fas fa-arrow-left"></i> Kembali</button>
+  <div class="w-full bg-black rounded-xl overflow-hidden shadow-2xl aspect-video mb-6 relative">
+    <iframe id="player" src="" class="w-full h-full" allowfullscreen></iframe>
+    <div id="loader" class="absolute inset-0 flex items-center justify-center bg-black"><i class="fas fa-spinner fa-spin text-4xl text-white"></i></div>
+  </div>
+  <div id="serverList" class="flex flex-wrap gap-2 mb-4"></div>
+  <div class="bg-[#1e293b] rounded-xl p-4">
+    <h2 class="text-xl font-bold mb-2" id="title">Memuat...</h2>
+    <h3 class="text-gray-400 mb-3">Episode Lainnya</h3>
+    <div id="episodeList" class="flex flex-wrap gap-2"></div>
+  </div>
+</div>
+<script>
+const source = '<%= source %>';
+const slug = '<%= slug %>';
+const episode = '<%= episode %>';
+async function loadWatch() {
+  const player = document.getElementById('player');
+  const loader = document.getElementById('loader');
+  const title = document.getElementById('title');
+  const serverList = document.getElementById('serverList');
+  const episodeList = document.getElementById('episodeList');
+  try {
+    const res = await fetch(`/api/watch/${source}/${slug}/${episode}`);
+    const data = await res.json();
+    title.textContent = data.title || `${source} - Episode ${episode}`;
+    let streams = data.streams || [];
+    if (streams.length === 0) {
+      loader.innerHTML = '<p class="text-red-400">Link video tidak ditemukan.</p>';
+      return;
+    }
+    let firstUrl = streams[0].url || streams[0].embedUrl || streams[0].iframeUrl || streams[0];
+    if (Array.isArray(streams) && streams.length > 0 && typeof streams[0] === 'string') firstUrl = streams[0];
+    player.src = firstUrl;
+    loader.style.display = 'none';
+    serverList.innerHTML = streams.map((s, i) => `
+      <button onclick="changeServer('${s.url || s.embedUrl || s.iframeUrl || s}')" class="bg-gray-700 px-3 py-1 rounded text-sm hover:bg-gray-600 ${i===0?'bg-blue-600':''}">
+        Server ${i+1} ${s.quality || s.resolution || ''}
+      </button>
+    `).join('');
+    const others = data.otherEpisodes || [];
+    episodeList.innerHTML = others.map(ep => `
+      <a href="/watch/${source}/${slug}/${ep.episode || ep.number || ep.title.match(/\d+/)?.[0] || 1}" class="bg-gray-700 px-3 py-1 rounded text-sm hover:bg-gray-600 transition ${(ep.episode == episode || ep.number == episode) ? 'bg-blue-600' : ''}">
+        ${ep.title || `Episode ${ep.episode || ep.number || '?'}`}
+      </a>
+    `).join('') || '<p class="text-gray-400">Tidak ada episode lain.</p>';
+  } catch (e) {
+    loader.innerHTML = `<p class="text-red-400">Error: ${e.message}</p>`;
+  }
+}
+function changeServer(url) {
+  document.getElementById('player').src = url;
+}
+loadWatch();
+</script>
