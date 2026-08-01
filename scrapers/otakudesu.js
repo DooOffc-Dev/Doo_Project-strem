@@ -14,8 +14,8 @@ const userAgents = [
   'Mozilla/5.0 (Linux; Android 14; SM-S921B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.6778.104 Mobile Safari/537.36'
 ];
 
-const BASE_URL = 'https://anoboy.news';
-const YUP_DOMAIN = 'https://ww1.anoboy.boo';
+const BASE_URL = 'https://otakudesu.news';
+const EP_BASE = 'https://nontonanimex.com';
 
 let _uaIndex = 0;
 
@@ -27,7 +27,7 @@ function getHeaders(referer) {
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
     'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
     'Accept-Encoding': 'gzip, deflate, br',
-    'Referer': referer || BASE_URL + '/',
+    'Referer': referer || 'https://nontonanimex.com/',
     'Sec-Ch-Ua': '"Not A(Brand";v="99", "Google Chrome";v="131", "Chromium";v="131"',
     'Sec-Ch-Ua-Mobile': '?0',
     'Sec-Ch-Ua-Platform': '"Windows"',
@@ -73,7 +73,7 @@ async function fetchWithRetry(url, retries = 5, referer = null) {
   throw lastError || new Error('Fetch failed after retries');
 }
 
-function decodeGozUrl(encodedStr) {
+function decodeDownloadUrl(encodedStr) {
   try {
     let reversed = encodedStr.split('').reverse().join('');
     let decoded = '';
@@ -82,50 +82,51 @@ function decodeGozUrl(encodedStr) {
       decoded += String.fromCharCode(charCode);
     }
     return decodeURIComponent(decoded);
-  } catch (e) {
-    try {
-      return Buffer.from(encodedStr, 'base64').toString('utf-8');
-    } catch (_) {
-      return null;
-    }
+  } catch (error) {
+    return null;
   }
 }
 
-function extractUrlFromStyle(styleAttr) {
-  if (!styleAttr) return null;
-  const match = styleAttr.match(/display:(https?:\/\/[^\s;]+)/);
-  return match ? match[1] : null;
-}
-
-async function resolveYupStreams(yupUrl) {
-  let path = yupUrl;
-  if (yupUrl.startsWith('http')) {
-    try {
-      const urlObj = new URL(yupUrl);
-      path = urlObj.pathname + urlObj.search;
-    } catch (_) {}
-  }
-  const fullUrl = YUP_DOMAIN + path;
+async function resolveLStream(lstreamUrl) {
   try {
-    const response = await fetchWithRetry(fullUrl, 3, fullUrl);
-    const html = response.data;
-    const $ = cheerio.load(html);
-    const result = {};
-    const map = { dua: '240', tiga: '360', empat: '480', tuju: '720' };
-    for (const [id, res] of Object.entries(map)) {
-      const link = $(`a#${id}`).attr('href');
-      if (link) result[res] = link;
+    const response = await fetchWithRetry(lstreamUrl, 3, lstreamUrl);
+    if (response.status >= 300 && response.status < 400 && response.headers.location) {
+      return response.headers.location;
     }
-    return Object.keys(result).length ? result : null;
+    if (response.headers['content-type'] && response.headers['content-type'].includes('application/json')) {
+      const json = response.data;
+      return json.url || json.stream || json.link || json.data || null;
+    }
+    const html = response.data;
+    const iframeMatch = html.match(/<iframe[^>]*src=["']([^"']+)["']/i);
+    if (iframeMatch) return iframeMatch[1];
+    return response.data.trim() || null;
   } catch (e) {
     return null;
   }
 }
 
-class AnoboyScraper {
+function convertToEmbedUrl(rawUrl) {
+  if (!rawUrl) return null;
+  if (rawUrl.includes('mega.nz/file/')) return rawUrl.replace('mega.nz/file/', 'mega.nz/embed/');
+  if (rawUrl.includes('mega.nz/#!')) return rawUrl.replace('mega.nz/#!', 'mega.nz/embed/#!');
+  const aceMatch = rawUrl.match(/acefile\.co\/f\/(\d+)/);
+  if (aceMatch) return 'https://acefile.co/player/' + aceMatch[1];
+  const krakenMatch = rawUrl.match(/krakenfiles\.com\/view\/([^/]+)/);
+  if (krakenMatch) return 'https://krakenfiles.com/embed-video/' + krakenMatch[1];
+  return rawUrl;
+}
+
+function isEmbedServer(serverName) {
+  const s = serverName.toLowerCase();
+  return s === 'acefile' || s === 'mega' || s === 'kfiles';
+}
+
+class OtakuDesuScraper {
   constructor() {
     this.creator = 'rynaqrtz';
     this.baseUrl = BASE_URL;
+    this.epBase = EP_BASE;
   }
 
   _clean(obj) {
@@ -148,7 +149,7 @@ class AnoboyScraper {
   _parseList(html) {
     const $ = cheerio.load(html);
     const items = [];
-    $('div.bg-white.shadow.xrelated.relative').each((i, el) => {
+    $('div.xrelated').each((i, el) => {
       const $el = $(el);
       const link = $el.find('a').attr('href');
       const img = $el.find('img').attr('src');
@@ -206,11 +207,11 @@ class AnoboyScraper {
   }
 
   async terbaru(page = 1) {
-    const url = page === 1 ? this.baseUrl + '/terbaru/' : this.baseUrl + `/terbaru/page/${page}/`;
+    const url = page === 1 ? this.baseUrl + '/terbaru/' : this.baseUrl + `/terbaru/page/${page}`;
     this._lastUrl = url;
     const html = (await fetchWithRetry(url)).data;
-    const $ = cheerio.load(html);
     const items = this._parseList(html);
+    const $ = cheerio.load(html);
     const pagination = this._parsePagination($);
     return this._clean({
       creator: this.creator,
@@ -219,58 +220,16 @@ class AnoboyScraper {
     });
   }
 
-  async ongoing(page = 1) {
-    const url = page === 1 ? this.baseUrl + '/ongoing/' : this.baseUrl + `/ongoing/page/${page}/`;
-    this._lastUrl = url;
-    const html = (await fetchWithRetry(url)).data;
-    const $ = cheerio.load(html);
-    const items = this._parseList(html);
-    const pagination = this._parsePagination($);
-    return this._clean({
-      creator: this.creator,
-      page: 'ongoing',
-      data: { url, pagination, items }
-    });
-  }
-
-  async complete(page = 1) {
-    const url = page === 1 ? this.baseUrl + '/complete/' : this.baseUrl + `/complete/page/${page}/`;
-    this._lastUrl = url;
-    const html = (await fetchWithRetry(url)).data;
-    const $ = cheerio.load(html);
-    const items = this._parseList(html);
-    const pagination = this._parsePagination($);
-    return this._clean({
-      creator: this.creator,
-      page: 'complete',
-      data: { url, pagination, items }
-    });
-  }
-
-  async episodes(page = 1) {
-    const url = page === 1 ? this.baseUrl + '/episodes/' : this.baseUrl + `/episodes/page/${page}/`;
-    this._lastUrl = url;
-    const html = (await fetchWithRetry(url)).data;
-    const $ = cheerio.load(html);
-    const items = this._parseList(html);
-    const pagination = this._parsePagination($);
-    return this._clean({
-      creator: this.creator,
-      page: 'episodes',
-      data: { url, pagination, items }
-    });
-  }
-
   async jadwalRilis() {
-    const url = this.baseUrl + '/jadwal-rilis/';
+    const url = this.baseUrl + '/jadwal-rilis';
     this._lastUrl = url;
     const html = (await fetchWithRetry(url)).data;
     const $ = cheerio.load(html);
     const schedule = {};
-    $('div.jcontent.infolist.jayapanel').each((i, el) => {
-      const day = $(el).find('h3').text().trim();
+    $('.jdlist div').each((i, el) => {
+      const day = $(el).find('h2').text().trim();
       const items = [];
-      $(el).find('ul.listd li a').each((j, a) => {
+      $(el).find('ul li a').each((j, a) => {
         const title = $(a).text().trim();
         const link = $(a).attr('href');
         if (title && link) items.push({ title, link: link.startsWith('http') ? link : this.baseUrl + link });
@@ -284,12 +243,54 @@ class AnoboyScraper {
     });
   }
 
+  async ongoing(page = 1) {
+    const url = page === 1 ? this.baseUrl + '/ongoing' : this.baseUrl + `/ongoing/page/${page}`;
+    this._lastUrl = url;
+    const html = (await fetchWithRetry(url)).data;
+    const items = this._parseList(html);
+    const $ = cheerio.load(html);
+    const pagination = this._parsePagination($);
+    return this._clean({
+      creator: this.creator,
+      page: 'ongoing',
+      data: { url, pagination, items }
+    });
+  }
+
+  async complete(page = 1) {
+    const url = page === 1 ? this.baseUrl + '/complete' : this.baseUrl + `/complete/page/${page}`;
+    this._lastUrl = url;
+    const html = (await fetchWithRetry(url)).data;
+    const items = this._parseList(html);
+    const $ = cheerio.load(html);
+    const pagination = this._parsePagination($);
+    return this._clean({
+      creator: this.creator,
+      page: 'complete',
+      data: { url, pagination, items }
+    });
+  }
+
+  async genre(slug, page = 1) {
+    const url = page === 1 ? this.baseUrl + `/genre/${slug}/` : this.baseUrl + `/genre/${slug}/page/${page}`;
+    this._lastUrl = url;
+    const html = (await fetchWithRetry(url)).data;
+    const items = this._parseList(html);
+    const $ = cheerio.load(html);
+    const pagination = this._parsePagination($);
+    return this._clean({
+      creator: this.creator,
+      page: 'genre',
+      data: { url, slug, pagination, items }
+    });
+  }
+
   async search(query, page = 1) {
     const url = page === 1 ? this.baseUrl + `/search/?q=${encodeURIComponent(query)}` : this.baseUrl + `/search/page/${page}/?q=${encodeURIComponent(query)}`;
     this._lastUrl = url;
     const html = (await fetchWithRetry(url)).data;
-    const $ = cheerio.load(html);
     const items = this._parseList(html);
+    const $ = cheerio.load(html);
     const pagination = this._parsePagination($);
     return this._clean({
       creator: this.creator,
@@ -304,9 +305,11 @@ class AnoboyScraper {
     const html = (await fetchWithRetry(url)).data;
     const $ = cheerio.load(html);
 
-    const title = $('h1.ptitle').text().trim() || $('h1').first().text().trim();
+    const title = $('div.htitle h1').text().trim() || $('h1').first().text().trim();
+    const score = $('div.htitle span').text().trim() || null;
+
     const info = {};
-    $('ul.infopost li').each((i, el) => {
+    $('ul.infol li').each((i, el) => {
       const text = $(el).text().trim();
       const parts = text.split(':');
       if (parts.length >= 2) {
@@ -316,16 +319,17 @@ class AnoboyScraper {
       }
     });
 
-    const synopsis = $('div.sinops').text().trim() || null;
-
     const episodes = [];
-    $('ul.ulinklist li a').each((i, el) => {
-      const link = $(el).attr('href');
-      const title = $(el).text().trim();
+    $('#ctlist li').each((i, el) => {
+      const $el = $(el);
+      const link = $el.find('a').attr('href');
+      const title = $el.find('a').text().trim();
+      const date = $el.find('span').last().text().trim();
       if (link) {
         episodes.push({
           title,
-          url: link.startsWith('http') ? link : this.baseUrl + link
+          url: link.startsWith('http') ? link : this.baseUrl + link,
+          releaseDate: date || null
         });
       }
     });
@@ -333,79 +337,87 @@ class AnoboyScraper {
     return this._clean({
       creator: this.creator,
       page: 'detail',
-      data: { url, slug, title, info, synopsis, episodes }
+      data: { url, slug, title, score, info, episodes }
     });
   }
 
   async episode(slug, episodeNum) {
-    const url = this.baseUrl + `/episode/${slug}-episode-${episodeNum}/`;
+    const url = this.epBase + `/episode/${slug}-episode-${episodeNum}-sub-indo/`;
     this._lastUrl = url;
     const html = (await fetchWithRetry(url)).data;
     const $ = cheerio.load(html);
 
-    const title = $('h1.title-post').text().trim() || $('h1').first().text().trim();
-    const date = $('.date').text().trim() || null;
+    const title = $('.tlpost').text().trim() || $('h1').first().text().trim();
+    const poster = $('.imgrpv').attr('src') || null;
+    const defaultPlayer = $('#mediaplayer').attr('src') || null;
 
-    const streamUrl = $('#mediaplayer').attr('data-src') || $('#mediaplayer').attr('src') || null;
+    const embedPlayers = [];
+    const downloadLinks = [];
 
-    const streamMirrors = [];
-    $('div.vmiror a[data-video]').each((i, el) => {
-      const name = $(el).text().trim();
-      const data = $(el).attr('data-video');
-      if (name && data) {
-        streamMirrors.push({
-          name,
-          url: data.startsWith('http') ? data : this.baseUrl + data
+    const promises = [];
+
+    $('.dlist ul li').each((_, el) => {
+      const $li = $(el);
+      const quality = $li.find('strong').text().trim();
+      if (!quality) return;
+
+      const embedServers = [];
+      const downloadServers = [];
+
+      $li.find('a').each((__, aEl) => {
+        const serverName = $(aEl).text().trim();
+        const href = $(aEl).attr('href') || '';
+        const token = href.split('/go/')[1];
+
+        if (token) {
+          const realUrl = decodeDownloadUrl(token);
+          if (realUrl) {
+            if (isEmbedServer(serverName)) {
+              embedServers.push({ server: serverName, raw: realUrl });
+            } else {
+              downloadServers.push({ server: serverName, url: realUrl });
+            }
+          }
+        }
+      });
+
+      if (embedServers.length > 0) {
+        const resolvePromises = embedServers.map(async (s) => {
+          let finalUrl = s.raw;
+          if (s.raw.includes('desustream') || s.raw.includes('link.desustream.com')) {
+            const resolved = await resolveLStream(s.raw);
+            if (resolved) finalUrl = resolved;
+          }
+          const embed = convertToEmbedUrl(finalUrl);
+          return { server: s.server, embedUrl: embed || finalUrl };
+        });
+        promises.push(
+          Promise.all(resolvePromises).then(resolvedServers => {
+            embedPlayers.push({
+              quality,
+              servers: resolvedServers.filter(s => s.embedUrl && s.embedUrl.length > 0)
+            });
+          })
+        );
+      }
+
+      if (downloadServers.length > 0) {
+        downloadLinks.push({
+          quality,
+          servers: downloadServers.map(s => ({ server: s.server, url: s.url }))
         });
       }
     });
 
-    let yupResolved = null;
-    const yupMirror = streamMirrors.find(m => m.name.includes('240-720') || m.name.includes('YUp'));
-    if (yupMirror) {
-      const resolved = await resolveYupStreams(yupMirror.url);
-      if (resolved) {
-        yupResolved = resolved;
-      }
-    }
-
-    const downloadLinks = [];
-    $('div.xdls span.ud').each((i, el) => {
-      const $el = $(el);
-      const provider = $el.find('span.udj').text().trim();
-      const links = [];
-      $el.find('a.udl').each((j, a) => {
-        const quality = $(a).text().trim();
-        const style = $(a).attr('style') || '';
-        let url = extractUrlFromStyle(style);
-        if (!url) {
-          const href = $(a).attr('href');
-          if (href && href.startsWith('/goz/')) {
-            const token = href.split('/goz/')[1];
-            if (token) {
-              const decoded = decodeGozUrl(token);
-              if (decoded && decoded.startsWith('http')) {
-                url = decoded;
-              }
-            }
-          }
-        }
-        if (url) {
-          links.push({ quality, url });
-        }
-      });
-      if (provider && links.length) {
-        downloadLinks.push({ provider, links });
-      }
-    });
+    await Promise.all(promises);
 
     let nextEpisode = null, prevEpisode = null;
     $('.othereps').each((i, el) => {
       const href = $(el).attr('href');
       if (!href) return;
-      const num = parseInt(href.match(/episode-(\d+)/)?.[1]);
-      if (num === episodeNum + 1) nextEpisode = href.startsWith('http') ? href : this.baseUrl + href;
-      if (num === episodeNum - 1) prevEpisode = href.startsWith('http') ? href : this.baseUrl + href;
+      const num = parseInt(href.match(/episode-(\d+)-/)?.[1]);
+      if (num === episodeNum + 1) nextEpisode = href.startsWith('http') ? href : this.epBase + href;
+      if (num === episodeNum - 1) prevEpisode = href.startsWith('http') ? href : this.epBase + href;
     });
 
     return this._clean({
@@ -416,10 +428,9 @@ class AnoboyScraper {
         slug,
         episode: episodeNum,
         title,
-        date,
-        streamUrl,
-        streamMirrors,
-        yupResolved,
+        poster,
+        defaultPlayer,
+        embedPlayers,
         downloadLinks,
         nextEpisode,
         prevEpisode
@@ -428,16 +439,16 @@ class AnoboyScraper {
   }
 
   async all() {
-    const [home, terbaru, ongoing, complete, episodes, jadwal, search, detail, episode] = await Promise.all([
+    const [home, terbaru, jadwal, ongoing, complete, genreComedy, searchDrStone, detail, episode] = await Promise.all([
       this.home(1),
       this.terbaru(1),
+      this.jadwalRilis(),
       this.ongoing(1),
       this.complete(1),
-      this.episodes(1),
-      this.jadwalRilis(),
-      this.search('haibara-kun', 1),
-      this.detail('2026-04-haibara-kun-no-tsuyokute-seishun-new-game'),
-      this.episode('2026-04-haibara-kun-no-tsuyokute-seishun-new-game', 1)
+      this.genre('comedy', 1),
+      this.search('Dr. Stone', 1),
+      this.detail('ds-future-part3-sub-indo'),
+      this.episode('drstn-s4-p3', 1)
     ]);
     return this._clean({
       creator: this.creator,
@@ -445,11 +456,11 @@ class AnoboyScraper {
       data: {
         home: home.data,
         terbaru: terbaru.data,
+        jadwal: jadwal.data,
         ongoing: ongoing.data,
         complete: complete.data,
-        episodes: episodes.data,
-        jadwal: jadwal.data,
-        search: search.data,
+        genreComedy: genreComedy.data,
+        searchDrStone: searchDrStone.data,
         detail: detail.data,
         episode: episode.data
       }
@@ -461,7 +472,7 @@ if (require.main === module) {
   const args = process.argv.slice(2);
   const command = args[0];
   const params = args.slice(1);
-  const scraper = new AnoboyScraper();
+  const scraper = new OtakuDesuScraper();
 
   (async () => {
     let result;
@@ -473,17 +484,18 @@ if (require.main === module) {
         case 'terbaru':
           result = await scraper.terbaru(parseInt(params[0]) || 1);
           break;
+        case 'jadwal':
+          result = await scraper.jadwalRilis();
+          break;
         case 'ongoing':
           result = await scraper.ongoing(parseInt(params[0]) || 1);
           break;
         case 'complete':
           result = await scraper.complete(parseInt(params[0]) || 1);
           break;
-        case 'episodes':
-          result = await scraper.episodes(parseInt(params[0]) || 1);
-          break;
-        case 'jadwal':
-          result = await scraper.jadwalRilis();
+        case 'genre':
+          if (!params[0]) throw new Error('Genre slug required');
+          result = await scraper.genre(params[0], parseInt(params[1]) || 1);
           break;
         case 'search':
           if (!params[0]) throw new Error('Query required');
@@ -502,7 +514,7 @@ if (require.main === module) {
           break;
         default:
           console.error('Unknown command');
-          console.log('Commands: home, terbaru, ongoing, complete, episodes, jadwal, search <query>, detail <slug>, episode <slug> <epNum>, all');
+          console.log('Commands: home, terbaru, jadwal, ongoing, complete, genre <slug>, search <query>, detail <slug>, episode <slug> <epNum>, all');
           process.exit(1);
       }
       console.log(JSON.stringify(result, null, 2));
@@ -513,4 +525,4 @@ if (require.main === module) {
   })();
 }
 
-module.exports = AnoboyScraper;
+module.exports = OtakuDesuScraper;
