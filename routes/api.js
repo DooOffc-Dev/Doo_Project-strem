@@ -1,54 +1,22 @@
 const express = require('express');
 const router = express.Router();
-const format = require('../utils/format');
 
+// Cuma panggil Anoboy dulu
 const Anoboy = require('../scrapers/anoboy');
-const Dracinema = require('../scrapers/Dracinema-Streaming');
-const Drakor = require('../scrapers/drakor');
-const Gomunime = require('../scrapers/gomunime');
-const Nt = require('../scrapers/nt');
-const Otakudesu = require('../scrapers/otakudesu');
-const Samehadaku = require('../scrapers/samehadaku');
 
 router.get('/home/:source', async (req, res) => {
   const { source } = req.params;
+  if (source !== 'anoboy') return res.json({ items: [] });
   try {
-    let raw;
-    switch(source) {
-      case 'anoboy': raw = await Anoboy.home(1); break;
-      case 'dracinema': raw = await Dracinema.getHome(); break;
-      case 'drakor': raw = await Drakor.scrapeHome(); break;
-      case 'gomunime': raw = await Gomunime.scrapeHome(); break;
-      case 'nt': raw = await Nt.listAnime('', 1); break;
-      case 'otakudesu': raw = await Otakudesu.home(1); break;
-      case 'samehadaku': raw = await Samehadaku.home(1); break;
-      default: return res.status(400).json({ error: 'Source tidak ditemukan' });
-    }
-    let items = raw.data?.items || raw.dramas || raw.items || raw.data?.results || raw.results || [];
-    items = items.map(i => format.standardizeItem(i));
+    const raw = await Anoboy.home(1);
+    const items = (raw.data?.items || []).map(i => ({
+      title: i.title || '',
+      slug: i.link?.split('/').pop() || '',
+      poster: i.img || '',
+      score: i.score || '',
+      episode: i.eps || ''
+    }));
     res.json({ source, items });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-router.get('/search/:source/:query', async (req, res) => {
-  const { source, query } = req.params;
-  try {
-    let raw;
-    switch(source) {
-      case 'anoboy': raw = await Anoboy.search(query, 1); break;
-      case 'dracinema': raw = await Dracinema.searchMovies(query); break;
-      case 'drakor': raw = await Drakor.scrapeSearch(query); break;
-      case 'gomunime': raw = await Gomunime.scrapeSearch(query); break;
-      case 'nt': raw = await Nt.search(query, 1); break;
-      case 'otakudesu': raw = await Otakudesu.search(query, 1); break;
-      case 'samehadaku': raw = await Samehadaku.search(query, 1); break;
-      default: return res.status(400).json({ error: 'Source tidak ditemukan' });
-    }
-    let items = raw.data?.items || raw.results || raw.items || raw.data?.results || [];
-    items = items.map(i => format.standardizeItem(i));
-    res.json({ source, query, items });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -57,20 +25,15 @@ router.get('/search/:source/:query', async (req, res) => {
 router.get('/detail/:source/:slug', async (req, res) => {
   const { source, slug } = req.params;
   try {
-    let raw;
-    switch(source) {
-      case 'anoboy': raw = await Anoboy.detail(slug); break;
-      case 'dracinema': raw = await Dracinema.getMovieDetails(slug); break;
-      case 'drakor': raw = await Drakor.scrapeDetail(slug); break;
-      case 'gomunime': raw = await Gomunime.scrapeAnimeInfo(slug); break;
-      case 'nt': raw = await Nt.animeDetail(slug); break;
-      case 'otakudesu': raw = await Otakudesu.detail(slug); break;
-      case 'samehadaku': raw = await Samehadaku.detail(slug); break;
-      default: return res.status(400).json({ error: 'Source tidak ditemukan' });
-    }
+    const raw = await Anoboy.detail(slug);
     const data = raw.data || raw;
-    const formatted = format.standardizeDetail(data);
-    res.json({ source, slug, ...formatted });
+    res.json({
+      title: data.title || '',
+      poster: data.poster || null,
+      synopsis: data.synopsis || '',
+      genres: [],
+      episodes: (data.episodes || []).map(ep => ({ title: ep.title, episode: ep.title.match(/\d+/)?.[0] || 1 }))
+    });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -79,20 +42,11 @@ router.get('/detail/:source/:slug', async (req, res) => {
 router.get('/watch/:source/:slug/:episode', async (req, res) => {
   const { source, slug, episode } = req.params;
   try {
-    let raw;
-    switch(source) {
-      case 'anoboy': raw = await Anoboy.episode(slug, parseInt(episode)); break;
-      case 'dracinema': raw = await Dracinema.getEpisodeStreaming(slug); break;
-      case 'drakor': raw = await Drakor.scrapeStream(slug, parseInt(episode)); break;
-      case 'gomunime': raw = await Gomunime.watchEpisode(slug); break;
-      case 'nt': raw = await Nt.episodeDetail(slug); break;
-      case 'otakudesu': raw = await Otakudesu.episode(slug, parseInt(episode)); break;
-      case 'samehadaku': raw = await Samehadaku.episode(slug); break;
-      default: return res.status(400).json({ error: 'Source tidak ditemukan' });
-    }
+    const raw = await Anoboy.episode(slug, parseInt(episode));
     const data = raw.data || raw;
-    const formatted = format.standardizeStream(data);
-    res.json({ source, slug, episode, ...formatted });
+    let streams = data.streamMirrors || [];
+    if (data.streamUrl) streams.push(data.streamUrl);
+    res.json({ title: data.title || '', streams, downloads: data.downloadLinks || [] });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
